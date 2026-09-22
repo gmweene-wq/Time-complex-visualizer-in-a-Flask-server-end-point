@@ -1,127 +1,159 @@
-
-import base64
-import datetime
-import io
-import os
 import time
-
+import base64
+import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # headless: no display needed to render plots
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from flask import Flask, jsonify, request
+import matplotlib.animation as anim
+from flask import Flask, request, jsonify
 
-from algorithms import ALGORITHMS
 
+
+def time_complexity_visualiser(algorithm, n_min, n_max, n_step):
+    times = []
+    input_sizes = list(range(n_min, n_max + n_step, n_step))
+
+    for n in input_sizes:
+        start_time = time.time()
+        algorithm(n)
+        end_time = time.time()
+        times.append(end_time - start_time)
+
+
+    fig, ax = plt.subplots()
+    ax.plot(input_sizes, times, 'o-')
+    ax.set_xlabel('Input Size')
+    ax.set_ylabel('Running Time (seconds)')
+    ax.set_title('Algorithm Time Complexity Visualiser')
+
+    # Save the plot to a file
+    filename = 'time_complexity_plot_{}_{}.png'.format(
+        algorithm.__name__, int(time.time() * 1000)
+    )
+    fig.savefig(filename)
+    plt.close(fig)
+
+    with open(filename, 'rb') as f:
+        imag_base64 = base64.b64encode(f.read()).decode('utf-8')
+    return imag_base64
+    
+# define the binary search algorithm
+def binary_search(n):
+    arr = list(range(n))
+    target = n - 1
+    left, right = 0, len(arr) - 1
+    while left <= right:
+        mid = left + (right - left) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+# define the linear search algorithm
+def linear_search(n):
+    arr = list(range(n))
+    target = n - 1
+    for i in range(len(arr)):
+        if arr[i] == target:
+            return i
+    return -1
+# define the bubble sort algorithm
+def bubble_sort(n):
+    arr = list(range(n, 0, -1))
+    for i in range(len(arr)):
+        for j in range(0, len(arr) - i - 1):
+            if arr[j] > arr[j + 1]:
+                arr[j], arr[j + 1] = arr[j + 1], arr[j]
+
+ # define the nested loop algorithm               
+def nested_loop(n):
+    for i in range(n):
+        for j in range(n):
+            pass
+
+ # define the selection sort algorithm       
+def selection_sort(n):
+    arr = list(range(n, 0, -1))
+    for i in range(len(arr)):
+        min_idx = i
+        for j in range(i + 1, len(arr)):
+            if arr[j] < arr[min_idx]:
+                min_idx = j
+        arr[i], arr[min_idx] = arr[min_idx], arr[i]
+
+# define the insertion sort algorithm
+def insertion_sort(n):
+    arr = list(range(n, 0, -1))
+    for i in range(1, len(arr)):
+        key = arr[i]
+        j = i - 1
+        while j >= 0 and arr[j] > key:
+            arr[j + 1] = arr[j]
+            j -= 1
+        arr[j + 1] = key
+
+# define the merge sort algorithm
+def merge_sort(n):
+    arr = list(range(n, 0, -1))
+
+    def _merge_sort(a):
+        if len(a) <= 1:
+            return a
+        mid = len(a) // 2
+        left = _merge_sort(a[:mid])
+        right = _merge_sort(a[mid:])
+        result = []
+        i = j = 0
+        while i < len(left) and j < len(right):
+            if left[i] <= right[j]:
+                result.append(left[i])
+                i += 1
+            else:
+                result.append(right[j])
+                j += 1
+        result.extend(left[i:])
+        result.extend(right[j:])
+        return result
+
+    arr = _merge_sort(arr)
+
+# define the algorithms dictionary
+Algorithms = {
+    'binary_search': binary_search,
+    'linear_search': linear_search,
+    'bubble_sort': bubble_sort,
+    'nested_loop': nested_loop,
+    'selection_sort': selection_sort,
+    'insertion_sort': insertion_sort,
+    'merge_sort': merge_sort
+}
+
+# define the Flask app
 app = Flask(__name__)
-
-PLOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "plots")
-os.makedirs(PLOTS_DIR, exist_ok=True)
-
-# Safety cap: some algorithms here are O(n^2) or worse. With a small step size and large n_max, the number of data points can explode.
-MAX_DATA_POINTS = 200
-
-
-def _parse_int(raw, field_name):
-
-    try:
-        return int(str(raw).replace(",", "").strip()), None
-    except (TypeError, ValueError):
-        return None, f"'{field_name}' must be an integer, got: {raw!r}"
-
-
-@app.route("/analyze", methods=["GET"])
+@app.route('/analyze')
 def analyze():
-    algo_param = request.args.get("algo")
-    step_param = request.args.get("step")
-    n_max_param = request.args.get("n_max")
+    algo = request.args.get('algo')
+    step = request.args.get('step', type=int)
+    n_max = request.args.get('n_max', type=int)
 
-    if not algo_param:
-        return jsonify({"error": "Missing required query parameter: algo"}), 400
-    if not step_param:
-        return jsonify({"error": "Missing required query parameter: step"}), 400
-    if not n_max_param:
-        return jsonify({"error": "Missing required query parameter: n_max"}), 400
-
-    # Allow one algo or a comma-separated list, and tolerate stray quotes/brackets
-    algo_names = [
-        a.strip().strip("'\"[]")
-        for a in algo_param.split(",")
-        if a.strip().strip("'\"[]")
-    ]
-
-    step, err = _parse_int(step_param, "step")
-    if err:
-        return jsonify({"error": err}), 400
-    n_max, err = _parse_int(n_max_param, "n_max")
-    if err:
-        return jsonify({"error": err}), 400
-
-    if step <= 0:
-        return jsonify({"error": "'step' must be a positive integer"}), 400
-    if n_max <= 0:
-        return jsonify({"error": "'n_max' must be a positive integer"}), 400
-
-    unknown = [a for a in algo_names if a not in ALGORITHMS]
-    if unknown:
-        return jsonify({
-            "error": f"Unknown algorithm(s): {', '.join(unknown)}",
-            "supported_algorithms": sorted(ALGORITHMS.keys())
-        }), 400
-
-    n_values = list(range(0, n_max + 1, step))
-    if len(n_values) > MAX_DATA_POINTS:
-        return jsonify({
-            "error": (
-                f"Too many data points ({len(n_values)}) for n_max={n_max} "
-                f"and step={step}. Increase step or lower n_max so that "
-                f"n_max // step <= {MAX_DATA_POINTS}."
-            )
-        }), 400
-
-    # Run each algorithm across every n and record wall-clock time
-    timings = {}
-    for name in algo_names:
-        func = ALGORITHMS[name]["func"]
-        series = []
-        for n in n_values:
-            start = time.perf_counter()
-            func(n)
-            series.append(time.perf_counter() - start)
-        timings[name] = series
-
-    # Build the plot
-    plt.figure(figsize=(8, 5))
-    for name, series in timings.items():
-        label = f"{name} ({ALGORITHMS[name]['complexity']})"
-        plt.plot(n_values, series, marker="o", markersize=3, label=label)
-    plt.xlabel("n (number of elements)")
-    plt.ylabel("Time (seconds)")
-    plt.title("Time Complexity Visualizer")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{'_'.join(algo_names)}_{timestamp}.png"
-    filepath = os.path.join(PLOTS_DIR, filename)
-    plt.savefig(filepath, dpi=120)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=120)
-    plt.close()
-    buf.seek(0)
-    image_base64 = base64.b64encode(buf.read()).decode("utf-8")
-
+    algorithm = Algorithms[algo]
+    image_base64 = time_complexity_visualiser(algorithm, 0, n_max, step)
     return jsonify({
-        "algorithms": algo_names,
-        "step": step,
-        "n_max": n_max,
-        "n_values": n_values,
-        "timings": timings,
-        "image_path": filepath,
-        "image_base64": image_base64,
+        'algorithm': algo,
+        'step': step,
+        'n_max': n_max,
+        'image_base64': image_base64
     })
 
+time_complexity_visualiser(binary_search, 100, 1000, 100)
+# time_complexity_visualiser(linear_search, 100, 1000, 100)
+# time_complexity_visualiser(bubble_sort, 100, 1000, 100)
+# time_complexity_visualiser(nested_loop, 100, 1000, 100)
+# time_complexity_visualiser(selection_sort, 100, 1000, 100)
+# time_complexity_visualiser(insertion_sort, 100, 1000, 100)
+# time_complexity_visualiser(merge_sort, 100, 1000, 100)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=8000, debug=True)
