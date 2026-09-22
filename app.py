@@ -6,7 +6,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 from flask import Flask, request, jsonify
+<<<<<<< HEAD
 from stack_queue_algorithms import STACK_QUEUE_ALGORITHMS
+=======
+>>>>>>> 4087a7eca9850e4ab3ab71c14d7696bdaeb6c819
 
 
 
@@ -130,7 +133,10 @@ Algorithms = {
     'insertion_sort': insertion_sort,
     'merge_sort': merge_sort
 }
+<<<<<<< HEAD
 Algorithms.update(STACK_QUEUE_ALGORITHMS)
+=======
+>>>>>>> 4087a7eca9850e4ab3ab71c14d7696bdaeb6c819
 
 # define the Flask app
 app = Flask(__name__)
@@ -149,8 +155,13 @@ def analyze():
         'image_base64': image_base64
     })
 
+<<<<<<< HEAD
 #time_complexity_visualiser(binary_search, 100, 1000, 100)
 #time_complexity_visualiser(linear_search, 100, 1000, 100)
+=======
+time_complexity_visualiser(binary_search, 100, 1000, 100)
+# time_complexity_visualiser(linear_search, 100, 1000, 100)
+>>>>>>> 4087a7eca9850e4ab3ab71c14d7696bdaeb6c819
 # time_complexity_visualiser(bubble_sort, 100, 1000, 100)
 # time_complexity_visualiser(nested_loop, 100, 1000, 100)
 # time_complexity_visualiser(selection_sort, 100, 1000, 100)
@@ -158,4 +169,8 @@ def analyze():
 # time_complexity_visualiser(merge_sort, 100, 1000, 100)
 
 if __name__ == '__main__':
+<<<<<<< HEAD
     app.run(host='0.0.0.0', port=8000, debug=True, use_reloader=False)
+=======
+        app.run(host='0.0.0.0', port=8000, debug=True)
+>>>>>>> 4087a7eca9850e4ab3ab71c14d7696bdaeb6c819
