@@ -150,7 +150,7 @@ def analyze():
         'image_base64': image_base64
     })
 
-time_complexity_visualiser(binary_search, 100, 1000, 100)
+#time_complexity_visualiser(binary_search, 100, 1000, 100)
 # time_complexity_visualiser(linear_search, 100, 1000, 100)
 # time_complexity_visualiser(bubble_sort, 100, 1000, 100)
 # time_complexity_visualiser(nested_loop, 100, 1000, 100)
