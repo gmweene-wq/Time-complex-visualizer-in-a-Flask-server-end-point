@@ -1,28 +1,20 @@
 from datetime import datetime
-
 from flask import Flask, request, jsonify
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+# Database setup (SQLAlchemy ORM only -- no raw SQL strings anywhere
 
-# ---------------------------------------------------------------------
-# Database setup (SQLAlchemy ORM only -- no raw SQL strings anywhere,
-# per the teacher's instruction: writing plain SQL directly in the app
-# opens the door to SQL injection, so every query here goes through the
-# ORM instead of string-built SQL).
-# ---------------------------------------------------------------------
 DATABASE_URL = "sqlite:///analysis.db"
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
-
+# Define the AnalysisResult model for the analysis_results table
 class AnalysisResult(Base):
-    """One saved analysis request: which algorithm, and what input range."""
-
     __tablename__ = "analysis_results"
-
+# table columns
     id = Column(Integer, primary_key=True, autoincrement=True)
     algorithm = Column(String(50), nullable=False)
     n_min = Column(Integer, nullable=False)
@@ -30,6 +22,7 @@ class AnalysisResult(Base):
     n_step = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# method to convert the model instance to a dictionary
     def to_dict(self):
         return {
             "id": self.id,
@@ -40,15 +33,12 @@ class AnalysisResult(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
-
+# create the analysis_results table if it doesn't exist yet
 def init_db():
-    """Create the analysis_results table if it doesn't exist yet."""
     Base.metadata.create_all(engine)
 
-
+# function to save a new analysis record to the database
 def save_analysis(algorithm, n_min, n_max, n_step):
-    """Insert a new analysis record (algorithm + input range) and return
-    it as a dict, including the auto-generated id and created_at."""
     session = SessionLocal()
     try:
         record = AnalysisResult(
@@ -202,8 +192,7 @@ def analyze():
     except (TypeError, ValueError):
         return jsonify({'error': 'n_min, n_max and n_step must be integers'}), 400
 
-    # algo has already been validated against Algorithms above, so there's
-    # nothing left to compute here -- just persist the request parameters.
+# save the analysis record to the database
     saved_record = save_analysis(
         algorithm=algo,
         n_min=n_min,
@@ -212,7 +201,6 @@ def analyze():
     )
 
     return jsonify(saved_record), 201
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=True)
