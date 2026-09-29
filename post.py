@@ -1,12 +1,20 @@
-from datetime import datetime
-from flask import Flask, request, jsonify
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
+import io
+import os
+import time
+from datetime import timedelta
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from flask import Flask, request, jsonify, send_file
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary
 from sqlalchemy.orm import declarative_base, sessionmaker
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import (
+    JWTManager, create_access_token, jwt_required, get_jwt_identity
+)
 
-# Database setup (SQLAlchemy ORM only -- no raw SQL strings anywhere
-
+# Database setup (SQLite file saved next to post.py)
 DATABASE_URL = "sqlite:///analysis.db"
-
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -20,7 +28,7 @@ class AnalysisResult(Base):
     n_min = Column(Integer, nullable=False)
     n_max = Column(Integer, nullable=False)
     n_step = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    image = Column(LargeBinary, nullable=False)  # the PNG graph, stored as a BLOB
 
 # method to convert the model instance to a dictionary
     def to_dict(self):
@@ -30,7 +38,8 @@ class AnalysisResult(Base):
             "n_min": self.n_min,
             "n_max": self.n_max,
             "n_step": self.n_step,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            # raw image bytes can't go in JSON, so just report its size
+            "image_size_bytes": len(self.image) if self.image else 0,
         }
 
 # create the analysis_results table if it doesn't exist yet
@@ -38,7 +47,7 @@ def init_db():
     Base.metadata.create_all(engine)
 
 # function to save a new analysis record to the database
-def save_analysis(algorithm, n_min, n_max, n_step):
+def save_analysis(algorithm, n_min, n_max, n_step, image):
     session = SessionLocal()
     try:
         record = AnalysisResult(
@@ -46,6 +55,7 @@ def save_analysis(algorithm, n_min, n_max, n_step):
             n_min=n_min,
             n_max=n_max,
             n_step=n_step,
+            image=image,
         )
         session.add(record)
         session.commit()
@@ -53,6 +63,38 @@ def save_analysis(algorithm, n_min, n_max, n_step):
         return record.to_dict()
     finally:
         session.close()
+
+# function to fetch one record's image (BLOB) by id
+def get_analysis_image(record_id):
+    session = SessionLocal()
+    try:
+        record = session.get(AnalysisResult, record_id)
+        return record.image if record else None
+    finally:
+        session.close()
+
+
+# time the algorithm at each input size and return the graph as PNG bytes
+def time_complexity_visualiser(algorithm, n_min, n_max, n_step):
+    input_sizes = list(range(n_min, n_max + 1, n_step))
+    times = []
+
+    for n in input_sizes:
+        start_time = time.perf_counter()
+        algorithm(n)
+        times.append(time.perf_counter() - start_time)
+
+    fig, ax = plt.subplots()
+    ax.plot(input_sizes, times, 'o-')
+    ax.set_xlabel('Input Size')
+    ax.set_ylabel('Running Time (seconds)')
+    ax.set_title('Time Complexity: {}'.format(algorithm.__name__))
+
+    # save the graph into memory (not to a file) and return the raw bytes
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format='png')
+    plt.close(fig)
+    return buffer.getvalue()
 
 
 # define the binary search algorithm
@@ -159,11 +201,71 @@ Algorithms = {
 
 # define the Flask app
 app = Flask(__name__)
+
+# The secret key signs every token.
+app.config["JWT_SECRET_KEY"] = os.environ.get(
+    "JWT_SECRET_KEY", "change-this-dev-secret-key-to-something-long"
+)
+# Only accept tokens from the Authorization header (not query params)
+app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+app.config["JWT_HEADER_NAME"] = "Authorization"
+app.config["JWT_HEADER_TYPE"] = "Bearer"
+# Tokens expire after 1 hour
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
+
+jwt = JWTManager(app)
+
+# Users who are allowed to log in
+USERS = {
+    "griphen": generate_password_hash("griphen123"),
+}
+
+
+# Custom 401 messages for every way a token can fail
+@jwt.unauthorized_loader
+def missing_token(reason):
+    # no Authorization header, or not in "Bearer <token>" format
+    return jsonify({"error": "I don't know you. You must be a fake hacker!!!!!!!!", "detail": reason}), 401
+
+
+@jwt.invalid_token_loader
+def invalid_token(reason):
+    # token was changed, badly formed, or signed with another key
+    return jsonify({"error": "I don't know you. Bye!", "detail": reason}), 401
+
+
+@jwt.expired_token_loader
+def expired_token(jwt_header, jwt_payload):
+    # token is older than JWT_ACCESS_TOKEN_EXPIRES
+    return jsonify({"error": "Your token has expired. Log in again."}), 401
+
+
 init_db()  # create the analysis_results table if it doesn't exist yet
 
+# Log in to get a JWT token
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({'error': 'Request body must be valid JSON'}), 400
 
+    username = data.get('username')
+    password = data.get('password')
+
+    password_hash = USERS.get(username)
+    if password_hash is None or not check_password_hash(password_hash, password or ""):
+        return jsonify({'error': "I don't know you. Bye!"}), 401
+
+    access_token = create_access_token(identity=username)
+    return jsonify({'access_token': access_token}), 200
+
+
+# Save an analysis record -- only for users with a valid JWT
 @app.route('/analyze', methods=['POST'])
+@jwt_required()
 def analyze():
+    current_user = get_jwt_identity()  # the username stored in the token
+
     data = request.get_json(silent=True)
     if data is None:
         return jsonify({'error': 'Request body must be valid JSON'}), 400
@@ -192,15 +294,36 @@ def analyze():
     except (TypeError, ValueError):
         return jsonify({'error': 'n_min, n_max and n_step must be integers'}), 400
 
-# save the analysis record to the database
+    if n_min < 0 or n_max < n_min:
+        return jsonify({'error': 'need 0 <= n_min <= n_max'}), 400
+    if n_step <= 0:
+        return jsonify({'error': 'n_step must be greater than 0'}), 400
+
+# run the algorithm and draw the graph (PNG bytes)
+    image_bytes = time_complexity_visualiser(Algorithms[algo], n_min, n_max, n_step)
+
+# save the analysis record (including the image BLOB) to the database
     saved_record = save_analysis(
         algorithm=algo,
         n_min=n_min,
         n_max=n_max,
         n_step=n_step,
+        image=image_bytes,
     )
+    saved_record['saved_by'] = current_user
 
     return jsonify(saved_record), 201
+
+
+# View the image (BLOB) of a saved record  also needs a valid JWT
+@app.route('/analyze/<int:record_id>/image', methods=['GET'])
+@jwt_required()
+def analysis_image(record_id):
+    image_bytes = get_analysis_image(record_id)
+    if image_bytes is None:
+        return jsonify({'error': 'No record with id {}'.format(record_id)}), 404
+    return send_file(io.BytesIO(image_bytes), mimetype='image/png')
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=True)
